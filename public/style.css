@@ -9,6 +9,7 @@
   --blue: #3A6FF2;
   --yellow: #F5B301;
   --green: #2FA758;
+  --orange: #F27B2C;
   --radius: 14px;
 }
 
@@ -175,3 +176,56 @@ input:focus, textarea:focus, select:focus, button:focus-visible {
 .feedback-overlay.bad { background: var(--red); }
 .feedback-overlay .big { font-size: clamp(2rem, 9vw, 3.5rem); }
 .feedback-overlay .points { font-size: 1.6rem; font-weight: 800; }
+
+/* ---------- Vignettage orange (3 dernières secondes) ---------- */
+.vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+  opacity: 0;
+  transition: opacity .3s;
+  background: radial-gradient(ellipse at center, transparent 52%, rgba(242, 123, 44, .65) 100%);
+}
+.vignette.on {
+  opacity: 1;
+  animation: vignettePulse 1s ease-in-out infinite;
+}
+@keyframes vignettePulse {
+  0%, 100% { opacity: .5; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .vignette.on { animation: none; opacity: .8; }
+}
+.timer-num.urgent, .timer-bar.urgent { color: var(--orange); }
+.timer-bar.urgent { background: var(--orange); }
+
+/* ---------- Banque de quiz ---------- */
+.bank-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  border-radius: 10px;
+  flex-wrap: wrap;
+}
+.bank-row .title { font-weight: 700; flex: 1; min-width: 140px; }
+.bank-row .badge {
+  font-size: .78rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink-dim);
+}
+.bank-row .badge.private { color: var(--orange); }
+.checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.checkbox-label input { width: auto; accent-color: var(--yellow); }

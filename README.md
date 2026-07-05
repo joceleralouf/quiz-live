@@ -35,6 +35,12 @@ Une fois déployé, le QR code et l'URL de join utilisent automatiquement le dom
 
 Formule Kahoot : `points = round(1000 × (1 − (t / durée) / 2))` si la réponse est correcte, 0 sinon. Réponse instantanée ≈ 1000 pts, réponse à la dernière seconde ≈ 500 pts.
 
+## Banque de quiz
+
+Les hôtes peuvent enregistrer leurs quiz dans une banque partagée (bouton "Enregistrer dans la banque" dans l'éditeur). L'option **Quiz privé** rend le quiz visible uniquement depuis l'appareil qui l'a créé (identifiant stocké dans le navigateur). La banque est stockée dans `data/quizzes.json` côté serveur.
+
+**Limite sur Render Free** : le système de fichiers est éphémère — la banque est effacée à chaque redéploiement ou mise en veille du serveur. Pour une banque vraiment permanente, il faut soit un plan payant avec disque persistant, soit une base de données externe. En attendant, le bouton "Exporter JSON" reste le moyen fiable de garder un quiz pour de bon.
+
 ## Règles de partie
 
 - La question se termine quand le timer expire **ou** quand tous les joueurs ont répondu
@@ -45,5 +51,6 @@ Formule Kahoot : `points = round(1000 × (1 − (t / durée) / 2))` si la répon
 ## Évolutions prévues (hors MVP)
 
 - Multi-parties simultanées (remplacer le singleton `game` par une `Map<pin, game>`)
+- Persistance durable de la banque de quiz (base de données)
 - Reconnexion d'un joueur en cours de partie
 - Images dans les questions, mode duo/équipes

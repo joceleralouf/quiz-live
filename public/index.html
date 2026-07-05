@@ -96,6 +96,9 @@
   <div id="fb-rank" style="font-weight:600"></div>
 </div>
 
+<!-- Vignettage 3 dernières secondes -->
+<div class="vignette" id="vignette"></div>
+
 <script src="/socket.io/socket.io.js"></script>
 <script>
 const socket = io();
@@ -156,19 +159,35 @@ socket.on('question_start', q => {
 
 function startTimer(duration) {
   clearInterval(timerInterval);
+  setVignette(false);
   const bar = $('timer-bar');
-  bar.classList.remove('running');
+  bar.classList.remove('running', 'urgent');
+  $('timer-num').classList.remove('urgent');
   void bar.offsetWidth; // reset animation
   bar.style.animationDuration = duration + 's';
   bar.classList.add('running');
 
   let left = duration;
   $('timer-num').textContent = left;
+  updateUrgency(left);
   timerInterval = setInterval(() => {
     left--;
     $('timer-num').textContent = Math.max(0, left);
+    updateUrgency(left);
     if (left <= 0) clearInterval(timerInterval);
   }, 1000);
+}
+
+function updateUrgency(left) {
+  const urgent = left <= 3 && left > 0;
+  setVignette(urgent);
+  $('timer-num').classList.toggle('urgent', urgent);
+  $('timer-bar').classList.toggle('urgent', urgent);
+  if (left <= 0) setVignette(false);
+}
+
+function setVignette(on) {
+  $('vignette').classList.toggle('on', on);
 }
 
 function answer(i) {
@@ -179,6 +198,7 @@ function answer(i) {
 
 socket.on('player_feedback', fb => {
   clearInterval(timerInterval);
+  setVignette(false);
   myScore = fb.score;
   const ov = $('feedback');
   ov.classList.remove('good', 'bad');

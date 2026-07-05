@@ -2,6 +2,7 @@
 const express = require('express');
 const http = require('http');
 const os = require('os');
+const fs = require('fs');
 const path = require('path');
 const { Server } = require('socket.io');
 
@@ -31,6 +32,34 @@ game = {
 
 function makePin() {
   return String(Math.floor(100000 + Math.random() * 900000));
+}
+
+// ---------- Banque de quiz (fichier JSON) ----------
+const DATA_DIR = path.join(__dirname, 'data');
+const BANK_FILE = path.join(DATA_DIR, 'quizzes.json');
+const BANK_MAX = 300;
+let bank = [];
+try { bank = JSON.parse(fs.readFileSync(BANK_FILE, 'utf8')); } catch { bank = []; }
+
+function saveBank() {
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(BANK_FILE, JSON.stringify(bank));
+  } catch (e) { console.error('Banque : échec de sauvegarde', e.message); }
+}
+
+function validateQuiz(quiz) {
+  if (!quiz || !Array.isArray(quiz.questions) || quiz.questions.length === 0) {
+    return 'Quiz vide ou invalide.';
+  }
+  for (const q of quiz.questions) {
+    if (!q.text || !Array.isArray(q.answers) || q.answers.length !== 4 ||
+        typeof q.correct !== 'number' || q.correct < 0 || q.correct > 3) {
+      return 'Question mal formée (texte, 4 réponses, bonne réponse requis).';
+    }
+    q.duration = Math.min(120, Math.max(5, Number(q.duration) || 20));
+  }
+  return null;
 }
 
 function lanIP() {
@@ -128,17 +157,8 @@ io.on('connection', (socket) => {
 
   // --- Hôte ---
   socket.on('host_create', (quiz, cb) => {
-    // valider le quiz
-    if (!quiz || !Array.isArray(quiz.questions) || quiz.questions.length === 0) {
-      return cb({ error: 'Quiz vide ou invalide.' });
-    }
-    for (const q of quiz.questions) {
-      if (!q.text || !Array.isArray(q.answers) || q.answers.length !== 4 ||
-          typeof q.correct !== 'number' || q.correct < 0 || q.correct > 3) {
-        return cb({ error: 'Question mal formée (texte, 4 réponses, bonne réponse requis).' });
-      }
-      q.duration = Math.min(120, Math.max(5, Number(q.duration) || 20));
-    }
+    const err = validateQuiz(quiz);
+    if (err) return cb({ error: err });
     // une seule room : la nouvelle partie remplace l'ancienne
     if (game) {
       io.to(game.pin).emit('game_closed');
@@ -175,6 +195,54 @@ io.on('connection', (socket) => {
   socket.on('host_skip', () => {
     if (!game || socket.id !== game.hostId || game.phase !== 'question') return;
     endQuestion();
+  });
+
+  // --- Banque de quiz ---
+  socket.on('bank_list', (ownerId, cb) => {
+    const list = bank
+      .filter(e => !e.isPrivate || e.ownerId === ownerId)
+      .map(e => ({
+        id: e.id,
+        title: e.title || 'Sans titre',
+        count: e.questions.length,
+        isPrivate: !!e.isPrivate,
+        mine: e.ownerId === ownerId,
+        createdAt: e.createdAt
+      }))
+      .sort((a, b) => b.createdAt - a.createdAt);
+    cb(list);
+  });
+
+  socket.on('bank_save', ({ quiz, isPrivate, ownerId }, cb) => {
+    const err = validateQuiz(quiz);
+    if (err) return cb({ error: err });
+    if (!ownerId) return cb({ error: 'Identifiant appareil manquant.' });
+    if (bank.length >= BANK_MAX) return cb({ error: 'Banque pleine.' });
+    const entry = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      title: String(quiz.title || '').slice(0, 80),
+      questions: quiz.questions,
+      isPrivate: !!isPrivate,
+      ownerId,
+      createdAt: Date.now()
+    };
+    bank.push(entry);
+    saveBank();
+    cb({ ok: true, id: entry.id });
+  });
+
+  socket.on('bank_get', ({ id, ownerId }, cb) => {
+    const e = bank.find(x => x.id === id);
+    if (!e || (e.isPrivate && e.ownerId !== ownerId)) return cb({ error: 'Quiz introuvable.' });
+    cb({ title: e.title, questions: e.questions });
+  });
+
+  socket.on('bank_delete', ({ id, ownerId }, cb) => {
+    const i = bank.findIndex(x => x.id === id);
+    if (i === -1 || bank[i].ownerId !== ownerId) return cb({ error: 'Suppression non autorisée.' });
+    bank.splice(i, 1);
+    saveBank();
+    cb({ ok: true });
   });
 
   // --- Joueur ---

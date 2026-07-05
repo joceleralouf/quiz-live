@@ -59,6 +59,18 @@
   <!-- ÉDITEUR -->
   <div id="editor" class="screen active">
     <div class="display" style="font-size:1.8rem">Créer un quiz</div>
+
+    <!-- Banque de quiz -->
+    <div class="card" style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <strong>Banque de quiz</strong>
+        <span class="muted" style="font-size:.85rem">quiz enregistrés par les hôtes précédents</span>
+      </div>
+      <div id="bank-list" style="display:flex;flex-direction:column;gap:8px">
+        <span class="muted" id="bank-empty">Aucun quiz dans la banque pour l'instant.</span>
+      </div>
+    </div>
+
     <input id="quiz-title" placeholder="Titre du quiz" style="max-width:420px">
     <div id="questions"></div>
     <div class="toolbar">
@@ -67,6 +79,14 @@
       <button class="btn-ghost" id="import-json">Importer JSON</button>
       <input type="file" id="import-file" accept=".json" hidden>
       <span class="muted" id="save-status"></span>
+    </div>
+    <div class="toolbar">
+      <button class="btn-ghost" id="save-bank">Enregistrer dans la banque</button>
+      <label class="checkbox-label muted">
+        <input type="checkbox" id="bank-private">
+        Quiz privé (visible uniquement depuis cet appareil)
+      </label>
+      <span class="muted" id="bank-status"></span>
     </div>
     <div>
       <button class="btn-primary" id="create-game">Créer la partie</button>
@@ -115,6 +135,9 @@
     <button class="btn-ghost" onclick="location.reload()">Nouvelle partie</button>
   </div>
 </div>
+
+<!-- Vignettage 3 dernières secondes -->
+<div class="vignette" id="vignette"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="/socket.io/socket.io.js"></script>
@@ -220,6 +243,73 @@ $('import-file').addEventListener('change', e => {
 
 renderEditor(loadDraft());
 
+/* ---------------- Banque de quiz ---------------- */
+function getOwnerId() {
+  let id = localStorage.getItem('hostOwnerId');
+  if (!id) {
+    id = (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+    localStorage.setItem('hostOwnerId', id);
+  }
+  return id;
+}
+const OWNER_ID = getOwnerId();
+
+function refreshBank() {
+  socket.emit('bank_list', OWNER_ID, list => {
+    const wrap = $('bank-list');
+    wrap.innerHTML = '';
+    if (!list.length) {
+      wrap.innerHTML = '<span class="muted">Aucun quiz dans la banque pour l\u2019instant.</span>';
+      return;
+    }
+    list.forEach(e => {
+      const row = document.createElement('div');
+      row.className = 'bank-row';
+      row.innerHTML = `
+        <span class="title"></span>
+        <span class="badge">${e.count} question${e.count > 1 ? 's' : ''}</span>
+        ${e.isPrivate ? '<span class="badge private">Privé</span>' : ''}
+        <button class="btn-ghost load-b">Charger</button>
+        ${e.mine ? '<button class="btn-ghost del-b" title="Supprimer">✕</button>' : ''}
+      `;
+      row.querySelector('.title').textContent = e.title;
+      row.querySelector('.load-b').addEventListener('click', () => {
+        socket.emit('bank_get', { id: e.id, ownerId: OWNER_ID }, res => {
+          if (res.error) { $('editor-err').textContent = res.error; return; }
+          renderEditor(res);
+          saveDraft();
+          window.scrollTo(0, 0);
+        });
+      });
+      const del = row.querySelector('.del-b');
+      if (del) del.addEventListener('click', () => {
+        socket.emit('bank_delete', { id: e.id, ownerId: OWNER_ID }, res => {
+          if (res.error) { $('editor-err').textContent = res.error; return; }
+          refreshBank();
+        });
+      });
+      wrap.appendChild(row);
+    });
+  });
+}
+socket.on('connect', refreshBank);
+
+$('save-bank').addEventListener('click', () => {
+  const q = readEditor();
+  $('editor-err').textContent = '';
+  const bad = q.questions.some(x => !x.text || x.answers.some(a => !a));
+  if (q.questions.length === 0 || bad) {
+    $('editor-err').textContent = 'Chaque question doit avoir un texte et 4 réponses remplies.';
+    return;
+  }
+  socket.emit('bank_save', { quiz: q, isPrivate: $('bank-private').checked, ownerId: OWNER_ID }, res => {
+    if (res.error) { $('editor-err').textContent = res.error; return; }
+    $('bank-status').textContent = 'Quiz enregistré dans la banque';
+    setTimeout(() => $('bank-status').textContent = '', 2000);
+    refreshBank();
+  });
+});
+
 /* ---------------- Création de partie ---------------- */
 $('create-game').addEventListener('click', () => {
   quiz = readEditor();
@@ -273,7 +363,9 @@ socket.on('question_start', q => {
     grid.appendChild(div);
   });
   const bar = $('h-timer-bar');
-  bar.classList.remove('running');
+  bar.classList.remove('running', 'urgent');
+  $('h-timer-num').classList.remove('urgent');
+  $('vignette').classList.remove('on');
   void bar.offsetWidth;
   bar.style.animationDuration = q.duration + 's';
   bar.classList.add('running');
@@ -283,6 +375,10 @@ socket.on('question_start', q => {
   hTimerInterval = setInterval(() => {
     left--;
     $('h-timer-num').textContent = Math.max(0, left);
+    const urgent = left <= 3 && left > 0;
+    $('vignette').classList.toggle('on', urgent);
+    $('h-timer-num').classList.toggle('urgent', urgent);
+    bar.classList.toggle('urgent', urgent);
     if (left <= 0) clearInterval(hTimerInterval);
   }, 1000);
   show('h-question');
@@ -296,6 +392,7 @@ $('skip-q').addEventListener('click', () => socket.emit('host_skip'));
 
 socket.on('question_end', data => {
   clearInterval(hTimerInterval);
+  $('vignette').classList.remove('on');
   // révéler la bonne réponse + répartition sur l'écran question, 3s, puis classement
   document.querySelectorAll('.h-ans').forEach((el, i) => {
     el.querySelector('.count').textContent = data.answersCount[i];
