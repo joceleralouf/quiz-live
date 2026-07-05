@@ -132,22 +132,18 @@ function show(id) {
 }
 
 /* ---------------- Éditeur ---------------- */
-const DEMO_QUIZ = {
-  title: "Spiritueux — échauffement",
+const EMPTY_QUIZ = {
+  title: "",
   questions: [
-    { text: "De quelle plante est distillé le mezcal ?", answers: ["Canne à sucre", "Agave", "Sorgho", "Cactus"], correct: 1, duration: 20 },
-    { text: "Le Fernet Branca est originaire de quelle ville ?", answers: ["Turin", "Venise", "Milan", "Bologne"], correct: 2, duration: 20 },
-    { text: "Laphroaig est une distillerie de quelle île écossaise ?", answers: ["Islay", "Skye", "Jura", "Orkney"], correct: 0, duration: 20 },
-    { text: "Quel est le degré du Wray & Nephew Overproof ?", answers: ["57%", "60%", "63%", "69%"], correct: 2, duration: 15 },
-    { text: "Le Negroni associe gin, Campari et…", answers: ["Vermouth dry", "Vermouth rouge", "Amaretto", "Cynar"], correct: 1, duration: 15 }
+    { text: "", answers: ["", "", "", ""], correct: 0, duration: 20 }
   ]
 };
 
 function loadDraft() {
   try {
     const d = localStorage.getItem('quizDraft');
-    return d ? JSON.parse(d) : DEMO_QUIZ;
-  } catch { return DEMO_QUIZ; }
+    return d ? JSON.parse(d) : EMPTY_QUIZ;
+  } catch { return EMPTY_QUIZ; }
 }
 
 function saveDraft() {
