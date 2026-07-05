@@ -35,6 +35,18 @@ Une fois déployé, le QR code et l'URL de join utilisent automatiquement le dom
 
 Formule Kahoot : `points = round(1000 × (1 − (t / durée) / 2))` si la réponse est correcte, 0 sinon. Réponse instantanée ≈ 1000 pts, réponse à la dernière seconde ≈ 500 pts.
 
+S'y ajoutent : un **bonus de série** (+100 par bonne réponse consécutive au-delà de la première, plafonné à +500) et des **points doublés sur la dernière question**.
+
+## Ambiance et expérience joueur
+
+- **Lobby vivant** : les joueurs envoient des réactions emoji (pluie d'emojis sur tous les écrans) et des petits messages (60 caractères max), anti-spam côté serveur. Les réactions sont aussi ouvertes pendant la révélation des réponses et sur le podium.
+- **Avatars** : chaque joueur choisit un avatar emoji à l'inscription, affiché dans le lobby et les classements.
+- **Compte à rebours 3-2-1** synchronisé avant chaque question, avec badge "points doublés" sur la finale.
+- **Sons** générés en WebAudio (aucun fichier) : bips du décompte, tic-tac des 3 dernières secondes, jingle bonne/mauvaise réponse, fanfare du podium. Bouton mute en haut à droite, mémorisé par appareil.
+- **Feedback enrichi** : série en cours (🔥), flèches de progression au classement (▲/▼), et affichage de la bonne réponse en cas d'erreur.
+- **Écran hôte** : joueur le plus rapide affiché entre les questions, podium à révélation progressive (3e, 2e, puis 1er avec confettis).
+- Toutes les animations respectent le réglage système "réduire les animations".
+
 ## Banque de quiz
 
 Les hôtes peuvent enregistrer leurs quiz dans une banque partagée (bouton "Enregistrer dans la banque" dans l'éditeur). L'option **Quiz privé** rend le quiz visible uniquement depuis l'appareil qui l'a créé (identifiant stocké dans le navigateur). La banque est stockée dans `data/quizzes.json` côté serveur.

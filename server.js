@@ -96,12 +96,32 @@ function publicQuestion() {
   };
 }
 
+function beginCountdown() {
+  const nextIndex = game.qIndex + 1;
+  if (nextIndex >= game.quiz.questions.length) return endGame();
+
+  game.phase = 'countdown';
+  // mémoriser le rang avant la question (pour les flèches de progression)
+  const sorted = [...game.players.entries()].sort((a, b) => b[1].score - a[1].score);
+  sorted.forEach(([, p], i) => { p.prevRank = i + 1; });
+
+  const isFinal = nextIndex === game.quiz.questions.length - 1;
+  io.to(game.pin).emit('get_ready', {
+    index: nextIndex,
+    total: game.quiz.questions.length,
+    isFinal
+  });
+  clearTimeout(game.qTimer);
+  game.qTimer = setTimeout(startQuestion, 3200);
+}
+
 function startQuestion() {
   game.qIndex++;
   if (game.qIndex >= game.quiz.questions.length) return endGame();
 
   game.phase = 'question';
   game.answersCount = [0, 0, 0, 0];
+  game.fastest = null;
   for (const p of game.players.values()) {
     p.answered = false;
     p.lastPoints = 0;
@@ -124,11 +144,14 @@ function endQuestion() {
 
   // feedback individuel
   for (const [id, p] of game.players.entries()) {
+    const rank = playerRank(id);
     io.to(id).emit('player_feedback', {
       correct: p.lastCorrect,
       points: p.lastPoints,
       score: p.score,
-      rank: playerRank(id),
+      rank,
+      rankDelta: p.prevRank ? p.prevRank - rank : 0,
+      streak: p.streak,
       totalPlayers: game.players.size,
       correctIndex: q.correct
     });
@@ -138,6 +161,7 @@ function endQuestion() {
     correctIndex: q.correct,
     answersCount: game.answersCount,
     leaderboard: leaderboard(5),
+    fastest: game.fastest,
     isLast: game.qIndex === game.quiz.questions.length - 1
   });
 }
@@ -173,7 +197,8 @@ io.on('connection', (socket) => {
       qIndex: -1,
       qStart: 0,
       qTimer: null,
-      answersCount: [0, 0, 0, 0]
+      answersCount: [0, 0, 0, 0],
+      fastest: null
     };
     socket.join(game.pin);
     cb({ pin: game.pin, ip: lanIP(), port: PORT });
@@ -184,12 +209,12 @@ io.on('connection', (socket) => {
     if (game.players.size === 0) {
       return socket.emit('host_error', 'Aucun joueur connecté.');
     }
-    startQuestion();
+    beginCountdown();
   });
 
   socket.on('host_next', () => {
     if (!game || socket.id !== game.hostId || game.phase !== 'reveal') return;
-    startQuestion();
+    beginCountdown();
   });
 
   socket.on('host_skip', () => {
@@ -246,7 +271,9 @@ io.on('connection', (socket) => {
   });
 
   // --- Joueur ---
-  socket.on('player_join', ({ pin, name }, cb) => {
+  const AVATARS = ['🦊','🐼','🐸','🦁','🐙','🦄','🐧','🐝','🐺','🐨','🦉','🦎'];
+
+  socket.on('player_join', ({ pin, name, avatar }, cb) => {
     if (!game || game.pin !== String(pin).trim()) {
       return cb({ error: 'PIN invalide ou aucune partie en cours.' });
     }
@@ -257,11 +284,38 @@ io.on('connection', (socket) => {
     if (!name) return cb({ error: 'Pseudo requis.' });
     const taken = [...game.players.values()].some(p => p.name.toLowerCase() === name.toLowerCase());
     if (taken) return cb({ error: 'Pseudo déjà pris.' });
+    if (!AVATARS.includes(avatar)) avatar = AVATARS[Math.floor(Math.random() * AVATARS.length)];
 
-    game.players.set(socket.id, { name, score: 0, streak: 0, answered: false, lastPoints: 0, lastCorrect: false });
+    game.players.set(socket.id, { name, avatar, score: 0, streak: 0, answered: false, lastPoints: 0, lastCorrect: false, prevRank: 0, lastReact: 0, lastMsg: 0 });
     socket.join(game.pin);
-    cb({ ok: true, name, quizTitle: game.quiz.title || 'Quiz' });
-    io.to(game.hostId).emit('lobby_update', [...game.players.values()].map(p => p.name));
+    cb({ ok: true, name, avatar, quizTitle: game.quiz.title || 'Quiz' });
+    io.to(game.hostId).emit('lobby_update', [...game.players.values()].map(p => ({ name: p.name, avatar: p.avatar })));
+  });
+
+  // Réactions emoji (lobby, révélation, podium)
+  const REACTIONS = ['🔥','😂','❤️','👏','🍸','🎉','😱','💪'];
+  socket.on('lobby_react', emoji => {
+    if (!game || !['lobby', 'reveal', 'podium'].includes(game.phase)) return;
+    const p = game.players.get(socket.id);
+    if (!p) return;
+    const now = Date.now();
+    if (now - p.lastReact < 400) return; // anti-spam
+    if (!REACTIONS.includes(emoji)) return;
+    p.lastReact = now;
+    io.to(game.pin).emit('react', { emoji, name: p.name, avatar: p.avatar });
+  });
+
+  // Petits messages (lobby uniquement)
+  socket.on('lobby_msg', text => {
+    if (!game || game.phase !== 'lobby') return;
+    const p = game.players.get(socket.id);
+    if (!p) return;
+    const now = Date.now();
+    if (now - p.lastMsg < 2500) return; // anti-spam
+    text = String(text || '').trim().slice(0, 60);
+    if (!text) return;
+    p.lastMsg = now;
+    io.to(game.pin).emit('chat', { text, name: p.name, avatar: p.avatar });
   });
 
   socket.on('player_answer', (answerIndex) => {
@@ -280,11 +334,17 @@ io.on('connection', (socket) => {
 
     if (answerIndex === q.correct) {
       // formule Kahoot : points dégressifs selon le temps de réponse
-      const points = Math.round(1000 * (1 - (t / q.duration) / 2));
+      const base = Math.round(1000 * (1 - (t / q.duration) / 2));
+      p.streak++;
+      // bonus de série : +100 par bonne réponse consécutive au-delà de la 1re (plafonné à +500)
+      const streakBonus = 100 * Math.min(Math.max(p.streak - 1, 0), 5);
+      let points = base + streakBonus;
+      // dernière question : points doublés
+      if (game.qIndex === game.quiz.questions.length - 1) points *= 2;
       p.score += points;
       p.lastPoints = points;
       p.lastCorrect = true;
-      p.streak++;
+      if (!game.fastest) game.fastest = { name: p.name, avatar: p.avatar, time: Math.round(t * 10) / 10 };
     } else {
       p.lastCorrect = false;
       p.streak = 0;
@@ -312,7 +372,7 @@ io.on('connection', (socket) => {
     if (game.players.has(socket.id)) {
       game.players.delete(socket.id);
       if (game.phase === 'lobby') {
-        io.to(game.hostId).emit('lobby_update', [...game.players.values()].map(p => p.name));
+        io.to(game.hostId).emit('lobby_update', [...game.players.values()].map(p => ({ name: p.name, avatar: p.avatar })));
       } else if (game.phase === 'question' && game.players.size > 0 &&
                  [...game.players.values()].every(x => x.answered)) {
         endQuestion();

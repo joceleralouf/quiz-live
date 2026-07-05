@@ -229,3 +229,133 @@ input:focus, textarea:focus, select:focus, button:focus-visible {
   user-select: none;
 }
 .checkbox-label input { width: auto; accent-color: var(--yellow); }
+
+/* ---------- Réactions : emojis qui tombent ---------- */
+#react-layer { position: fixed; inset: 0; pointer-events: none; z-index: 30; overflow: hidden; }
+.fall-emoji {
+  position: absolute;
+  top: -8vh;
+  animation: fall linear forwards;
+  will-change: transform;
+}
+@keyframes fall {
+  to { transform: translateY(120vh) rotate(260deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fall-emoji { animation-duration: .01s !important; opacity: 0; }
+}
+
+/* ---------- Bulles de messages ---------- */
+#chat-layer {
+  position: fixed;
+  bottom: 90px;
+  left: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  pointer-events: none;
+  z-index: 31;
+}
+.chat-bubble {
+  background: var(--surface-2);
+  border-radius: 14px;
+  padding: 8px 14px;
+  max-width: 85%;
+  font-size: .95rem;
+  box-shadow: 0 4px 14px rgba(0,0,0,.35);
+  animation: bubbleIn .25s ease-out;
+}
+.chat-bubble .who { font-weight: 800; margin-right: 6px; }
+.chat-bubble.fade { opacity: 0; transition: opacity .6s; }
+@keyframes bubbleIn { from { transform: translateY(12px); opacity: 0; } }
+
+/* ---------- Barre de réactions ---------- */
+.react-bar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.react-bar button {
+  background: var(--surface-2);
+  font-size: 1.5rem;
+  padding: 10px 14px;
+  border-radius: 12px;
+  transition: transform .1s;
+}
+.react-bar button:active { transform: scale(1.25); }
+.msg-bar { display: flex; gap: 8px; width: min(360px, 100%); }
+.msg-bar input { flex: 1; }
+.msg-bar button { flex: none; }
+
+/* ---------- Avatars ---------- */
+.avatar-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+}
+.avatar-grid button {
+  font-size: 1.7rem;
+  padding: 8px 0;
+  background: var(--surface-2);
+  border-radius: 10px;
+  border: 2px solid transparent;
+}
+.avatar-grid button.sel {
+  border-color: var(--yellow);
+  background: var(--surface);
+}
+
+/* ---------- Compte à rebours 3-2-1 ---------- */
+#countdown-screen, #h-countdown {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+}
+.count-num {
+  font-size: clamp(6rem, 30vw, 12rem);
+  color: var(--yellow);
+  line-height: 1;
+  animation: countPop .9s ease-out;
+}
+@keyframes countPop {
+  0% { transform: scale(1.6); opacity: 0; }
+  30% { transform: scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .count-num { animation: none; } }
+.final-badge {
+  background: var(--orange);
+  color: #fff;
+  font-weight: 800;
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 1.05rem;
+}
+
+/* ---------- Podium progressif ---------- */
+.podium .col { opacity: 0; transform: translateY(24px); transition: opacity .5s, transform .5s; }
+.podium .col.revealed { opacity: 1; transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) {
+  .podium .col { transition: none; opacity: 1; transform: none; }
+}
+
+/* ---------- Bouton son ---------- */
+.sound-btn {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 60;
+  background: var(--surface-2);
+  font-size: 1.2rem;
+  padding: 8px 12px;
+  border-radius: 12px;
+  opacity: .85;
+}
+
+/* ---------- Divers feedback ---------- */
+.fb-extra { font-size: 1.05rem; font-weight: 700; }
+.rank-up { color: #B9F6CA; }
+.rank-down { color: #FFD1D1; }

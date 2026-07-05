@@ -105,6 +105,13 @@
     <div class="err" id="lobby-err" style="color:var(--red);font-weight:600;min-height:1.4em"></div>
   </div>
 
+  <!-- COMPTE À REBOURS -->
+  <div id="h-countdown" class="screen" style="min-height:70dvh">
+    <span class="chip" id="h-cd-count"></span>
+    <div class="count-num display" id="h-cd-num">3</div>
+    <div class="final-badge" id="h-cd-final" style="display:none">⚡ Dernière question : points doublés !</div>
+  </div>
+
   <!-- QUESTION -->
   <div id="h-question" class="screen">
     <div class="q-head" style="display:flex;align-items:center;gap:14px">
@@ -121,6 +128,7 @@
   <!-- CLASSEMENT INTERMÉDIAIRE -->
   <div id="h-reveal" class="screen">
     <div class="display" style="font-size:1.6rem;text-align:center">Classement</div>
+    <div style="text-align:center;font-weight:700" id="fastest-line"></div>
     <div class="lb-list" id="lb-list"></div>
     <div style="text-align:center">
       <button class="btn-primary" id="next-q">Question suivante</button>
@@ -138,6 +146,10 @@
 
 <!-- Vignettage 3 dernières secondes -->
 <div class="vignette" id="vignette"></div>
+<!-- Couches réactions -->
+<div id="react-layer"></div>
+<div id="chat-layer"></div>
+<button class="sound-btn" id="sound-btn" title="Son">🔊</button>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="/socket.io/socket.io.js"></script>
@@ -147,6 +159,66 @@ const $ = id => document.getElementById(id);
 const SHAPES = ['▲', '◆', '●', '■'];
 let quiz = null;
 let hTimerInterval = null;
+
+/* ---------------- Sons (WebAudio) ---------------- */
+const Sound = (() => {
+  let ctx = null;
+  let muted = localStorage.getItem('quizMuted') === '1';
+  function ac() {
+    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === 'suspended') ctx.resume();
+    return ctx;
+  }
+  function beep(freq, dur = 0.12, type = 'sine', vol = 0.2, when = 0) {
+    if (muted) return;
+    try {
+      const c = ac(), o = c.createOscillator(), g = c.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.setValueAtTime(vol, c.currentTime + when);
+      g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + when + dur);
+      o.connect(g); g.connect(c.destination);
+      o.start(c.currentTime + when); o.stop(c.currentTime + when + dur + 0.05);
+    } catch {}
+  }
+  return {
+    unlock() { try { ac(); } catch {} },
+    toggle() { muted = !muted; localStorage.setItem('quizMuted', muted ? '1' : '0'); return muted; },
+    isMuted() { return muted; },
+    tick() { beep(880, .07, 'square', .1); },
+    count(final) { beep(final ? 880 : 440, final ? .35 : .15, 'sine', .25); },
+    good() { [523, 659, 784].forEach((f, i) => beep(f, .16, 'sine', .22, i * .1)); },
+    fanfare() { [392, 523, 659, 784, 1047].forEach((f, i) => beep(f, .22, 'sine', .22, i * .13)); }
+  };
+})();
+document.addEventListener('pointerdown', () => Sound.unlock(), { once: true });
+$('sound-btn').textContent = Sound.isMuted() ? '🔇' : '🔊';
+$('sound-btn').addEventListener('click', () => {
+  $('sound-btn').textContent = Sound.toggle() ? '🔇' : '🔊';
+});
+
+/* ---------------- Réactions ---------------- */
+function spawnEmoji(emoji) {
+  const el = document.createElement('div');
+  el.className = 'fall-emoji';
+  el.textContent = emoji;
+  el.style.left = (4 + Math.random() * 88) + 'vw';
+  el.style.fontSize = (1.8 + Math.random() * 2.2) + 'rem';
+  el.style.animationDuration = (2.2 + Math.random() * 1.6) + 's';
+  $('react-layer').appendChild(el);
+  el.addEventListener('animationend', () => el.remove());
+}
+socket.on('react', r => spawnEmoji(r.emoji));
+socket.on('chat', c => {
+  const layer = $('chat-layer');
+  const b = document.createElement('div');
+  b.className = 'chat-bubble';
+  b.innerHTML = '<span class="who"></span><span class="txt"></span>';
+  b.querySelector('.who').textContent = `${c.avatar} ${c.name}`;
+  b.querySelector('.txt').textContent = c.text;
+  layer.appendChild(b);
+  while (layer.children.length > 5) layer.firstChild.remove();
+  setTimeout(() => { b.classList.add('fade'); setTimeout(() => b.remove(), 700); }, 4500);
+});
 
 function show(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -333,19 +405,42 @@ $('create-game').addEventListener('click', () => {
   });
 });
 
-socket.on('lobby_update', names => {
-  $('player-count').textContent = names.length;
+socket.on('lobby_update', players => {
+  $('player-count').textContent = players.length;
   $('players-list').innerHTML = '';
-  names.forEach(n => {
+  players.forEach(p => {
     const c = document.createElement('span');
     c.className = 'chip';
-    c.textContent = n;
+    c.textContent = `${p.avatar} ${p.name}`;
     $('players-list').appendChild(c);
   });
 });
 
 $('start-game').addEventListener('click', () => socket.emit('host_start'));
 socket.on('host_error', msg => $('lobby-err').textContent = msg);
+
+/* ---------------- Compte à rebours ---------------- */
+socket.on('get_ready', g => {
+  $('vignette').classList.remove('on');
+  $('h-cd-count').textContent = `Question ${g.index + 1}/${g.total}`;
+  $('h-cd-final').style.display = g.isFinal ? '' : 'none';
+  show('h-countdown');
+  let n = 3;
+  const num = $('h-cd-num');
+  const showN = () => {
+    num.textContent = n;
+    num.style.animation = 'none';
+    void num.offsetWidth;
+    num.style.animation = '';
+    Sound.count(n === 1);
+  };
+  showN();
+  const iv = setInterval(() => {
+    n--;
+    if (n <= 0) { clearInterval(iv); return; }
+    showN();
+  }, 1000);
+});
 
 /* ---------------- Déroulé ---------------- */
 socket.on('question_start', q => {
@@ -376,6 +471,7 @@ socket.on('question_start', q => {
     left--;
     $('h-timer-num').textContent = Math.max(0, left);
     const urgent = left <= 3 && left > 0;
+    if (urgent) Sound.tick();
     $('vignette').classList.toggle('on', urgent);
     $('h-timer-num').classList.toggle('urgent', urgent);
     bar.classList.toggle('urgent', urgent);
@@ -399,6 +495,9 @@ socket.on('question_end', data => {
     if (i !== data.correctIndex) el.classList.add('dimmed');
   });
   setTimeout(() => {
+    $('fastest-line').textContent = data.fastest
+      ? `⚡ Le plus rapide : ${data.fastest.avatar} ${data.fastest.name} (${data.fastest.time}s)`
+      : '';
     $('lb-list').innerHTML = '';
     data.leaderboard.forEach((p, i) => {
       const row = document.createElement('div');
@@ -415,8 +514,10 @@ socket.on('question_end', data => {
 $('next-q').addEventListener('click', () => socket.emit('host_next'));
 
 socket.on('game_over', data => {
-  const order = [1, 0, 2]; // 2e, 1er, 3e
+  $('vignette').classList.remove('on');
+  const order = [1, 0, 2]; // 2e, 1er, 3e (positions visuelles)
   $('podium').innerHTML = '';
+  const cols = {};
   order.forEach(pos => {
     const p = data.podium[pos];
     if (!p) return;
@@ -425,6 +526,7 @@ socket.on('game_over', data => {
     col.innerHTML = `<div class="chip nm"></div><div class="bar display">${pos + 1}</div><div class="muted">${p.score} pts</div>`;
     col.querySelector('.nm').textContent = p.name;
     $('podium').appendChild(col);
+    cols[pos] = col;
   });
   $('final-lb').innerHTML = '';
   data.leaderboard.forEach((p, i) => {
@@ -435,6 +537,24 @@ socket.on('game_over', data => {
     $('final-lb').appendChild(row);
   });
   show('podium-view');
+  // révélation progressive : 3e, puis 2e, puis 1er + confettis
+  const reveal = (pos, delay, fanfare) => setTimeout(() => {
+    if (!cols[pos]) return;
+    cols[pos].classList.add('revealed');
+    if (fanfare) {
+      Sound.fanfare();
+      let burst = 0;
+      const iv = setInterval(() => {
+        for (let i = 0; i < 6; i++) spawnEmoji(['🎉', '✨', '🏆', '🥇'][Math.floor(Math.random() * 4)]);
+        if (++burst >= 6) clearInterval(iv);
+      }, 350);
+    } else {
+      Sound.good();
+    }
+  }, delay);
+  reveal(2, 600);
+  reveal(1, 1800);
+  reveal(0, 3200, true);
 });
 </script>
 </body>

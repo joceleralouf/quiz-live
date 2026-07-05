@@ -12,14 +12,14 @@
   .wrap { height: 100dvh; display: flex; flex-direction: column; padding: 16px; gap: 12px; }
 
   /* Écran d'accueil */
-  #join { justify-content: center; align-items: center; gap: 18px; text-align: center; }
+  #join { justify-content: center; align-items: center; gap: 16px; text-align: center; overflow-y: auto; }
   #join form { display: flex; flex-direction: column; gap: 12px; width: min(340px, 100%); }
   #join input { text-align: center; font-size: 1.3rem; font-weight: 700; }
   #pin-input { letter-spacing: .2em; }
   .err { color: var(--red); font-weight: 600; min-height: 1.4em; }
 
-  /* Attente */
-  #wait { justify-content: center; align-items: center; gap: 14px; text-align: center; }
+  /* Attente / lobby */
+  #wait { justify-content: center; align-items: center; gap: 16px; text-align: center; }
   .pulse { animation: pulse 1.6s ease-in-out infinite; }
   @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
   @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
@@ -40,11 +40,12 @@
     align-items: center; justify-content: center; gap: 10px; text-align: center;
   }
 
-  /* Podium joueur */
+  /* Fin */
   #end { justify-content: center; align-items: center; gap: 14px; text-align: center; }
 </style>
 </head>
 <body>
+<button class="sound-btn" id="sound-btn" title="Son">🔊</button>
 <div class="wrap">
 
   <!-- Rejoindre -->
@@ -53,6 +54,8 @@
     <form id="join-form">
       <input id="pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="PIN à 6 chiffres" required>
       <input id="name-input" maxlength="20" placeholder="Ton pseudo" required>
+      <div class="muted" style="font-size:.9rem;text-align:left">Choisis ton avatar</div>
+      <div class="avatar-grid" id="avatar-grid"></div>
       <button class="btn-primary" type="submit">Rejoindre</button>
       <div class="err" id="join-err"></div>
     </form>
@@ -62,8 +65,20 @@
   <!-- Lobby / attente -->
   <div id="wait" class="screen">
     <div class="display" style="font-size:1.6rem" id="wait-title">Tu es dans la partie</div>
-    <div class="chip" id="wait-name"></div>
+    <div class="chip" id="wait-name" style="font-size:1.1rem"></div>
     <div class="muted pulse">En attente du lancement…</div>
+    <div class="react-bar" id="lobby-reacts"></div>
+    <div class="msg-bar">
+      <input id="msg-input" maxlength="60" placeholder="Petit message…">
+      <button class="btn-ghost" id="msg-send">Envoyer</button>
+    </div>
+  </div>
+
+  <!-- Compte à rebours -->
+  <div id="countdown-screen" class="screen">
+    <span class="chip" id="cd-count"></span>
+    <div class="count-num display" id="cd-num">3</div>
+    <div class="final-badge" id="cd-final" style="display:none">⚡ Dernière question : points doublés !</div>
   </div>
 
   <!-- Question -->
@@ -86,6 +101,7 @@
     <div class="display" style="font-size:2rem">Partie terminée</div>
     <div class="display" id="final-rank" style="font-size:3rem;color:var(--yellow)"></div>
     <div class="chip" id="final-score"></div>
+    <div class="react-bar" id="end-reacts"></div>
   </div>
 </div>
 
@@ -93,9 +109,15 @@
 <div class="feedback-overlay" id="feedback">
   <div class="big display" id="fb-title"></div>
   <div class="points" id="fb-points"></div>
+  <div class="fb-extra" id="fb-streak"></div>
+  <div class="fb-extra" id="fb-delta"></div>
+  <div class="fb-extra" id="fb-correct"></div>
   <div id="fb-rank" style="font-weight:600"></div>
 </div>
 
+<!-- Couches réactions -->
+<div id="react-layer"></div>
+<div id="chat-layer"></div>
 <!-- Vignettage 3 dernières secondes -->
 <div class="vignette" id="vignette"></div>
 
@@ -109,35 +131,165 @@ const SHAPES = [
   '<svg class="shape" viewBox="0 0 30 30"><circle cx="15" cy="15" r="13" fill="rgba(26,22,8,.85)"/></svg>',
   '<svg class="shape" viewBox="0 0 30 30"><rect x="3" y="3" width="24" height="24" fill="rgba(255,255,255,.9)"/></svg>'
 ];
+const AVATARS = ['🦊','🐼','🐸','🦁','🐙','🦄','🐧','🐝','🐺','🐨','🦉','🦎'];
+const REACTIONS = ['🔥','😂','❤️','👏','🍸','🎉','😱','💪'];
 
 let myScore = 0;
+let myAvatar = AVATARS[Math.floor(Math.random() * AVATARS.length)];
+let lastAnswers = [];
 let timerInterval = null;
 
+/* ---------------- Sons (WebAudio, aucun fichier) ---------------- */
+const Sound = (() => {
+  let ctx = null;
+  let muted = localStorage.getItem('quizMuted') === '1';
+  function ac() {
+    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (ctx.state === 'suspended') ctx.resume();
+    return ctx;
+  }
+  function beep(freq, dur = 0.12, type = 'sine', vol = 0.2, when = 0) {
+    if (muted) return;
+    try {
+      const c = ac(), o = c.createOscillator(), g = c.createGain();
+      o.type = type; o.frequency.value = freq;
+      g.gain.setValueAtTime(vol, c.currentTime + when);
+      g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + when + dur);
+      o.connect(g); g.connect(c.destination);
+      o.start(c.currentTime + when); o.stop(c.currentTime + when + dur + 0.05);
+    } catch {}
+  }
+  return {
+    unlock() { try { ac(); } catch {} },
+    toggle() { muted = !muted; localStorage.setItem('quizMuted', muted ? '1' : '0'); return muted; },
+    isMuted() { return muted; },
+    tick() { beep(880, .07, 'square', .1); },
+    count(final) { beep(final ? 880 : 440, final ? .35 : .15, 'sine', .25); },
+    good() { [523, 659, 784].forEach((f, i) => beep(f, .16, 'sine', .22, i * .1)); },
+    bad() { beep(196, .35, 'sawtooth', .16); },
+    pop() { beep(660, .06, 'triangle', .1); }
+  };
+})();
+document.addEventListener('pointerdown', () => Sound.unlock(), { once: true });
+$('sound-btn').textContent = Sound.isMuted() ? '🔇' : '🔊';
+$('sound-btn').addEventListener('click', () => {
+  $('sound-btn').textContent = Sound.toggle() ? '🔇' : '🔊';
+});
+
+/* ---------------- Écrans ---------------- */
 function show(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   $(id).classList.add('active');
 }
 
-// Pré-remplir le PIN depuis le QR code (?pin=XXXXXX)
+/* ---------------- Avatars ---------------- */
+AVATARS.forEach(a => {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = a;
+  if (a === myAvatar) b.classList.add('sel');
+  b.addEventListener('click', () => {
+    myAvatar = a;
+    document.querySelectorAll('.avatar-grid button').forEach(x => x.classList.remove('sel'));
+    b.classList.add('sel');
+    Sound.pop();
+  });
+  $('avatar-grid').appendChild(b);
+});
+
+/* ---------------- Rejoindre ---------------- */
 const urlPin = new URLSearchParams(location.search).get('pin');
 if (urlPin) $('pin-input').value = urlPin;
 
 $('join-form').addEventListener('submit', e => {
   e.preventDefault();
   socket.emit('player_join',
-    { pin: $('pin-input').value, name: $('name-input').value },
+    { pin: $('pin-input').value, name: $('name-input').value, avatar: myAvatar },
     res => {
       if (res.error) { $('join-err').textContent = res.error; return; }
-      $('wait-name').textContent = res.name;
+      $('wait-name').textContent = `${res.avatar} ${res.name}`;
       $('wait-title').textContent = res.quizTitle;
       show('wait');
     });
 });
 
+/* ---------------- Réactions & messages ---------------- */
+function buildReactBar(container) {
+  REACTIONS.forEach(r => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = r;
+    b.addEventListener('click', () => { socket.emit('lobby_react', r); Sound.pop(); });
+    container.appendChild(b);
+  });
+}
+buildReactBar($('lobby-reacts'));
+buildReactBar($('end-reacts'));
+
+function sendMsg() {
+  const t = $('msg-input').value.trim();
+  if (!t) return;
+  socket.emit('lobby_msg', t);
+  $('msg-input').value = '';
+}
+$('msg-send').addEventListener('click', sendMsg);
+$('msg-input').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); sendMsg(); } });
+
+function spawnEmoji(emoji) {
+  const el = document.createElement('div');
+  el.className = 'fall-emoji';
+  el.textContent = emoji;
+  el.style.left = (4 + Math.random() * 88) + 'vw';
+  el.style.fontSize = (1.6 + Math.random() * 1.8) + 'rem';
+  el.style.animationDuration = (2.2 + Math.random() * 1.6) + 's';
+  $('react-layer').appendChild(el);
+  el.addEventListener('animationend', () => el.remove());
+}
+
+socket.on('react', r => { spawnEmoji(r.emoji); });
+
+socket.on('chat', c => {
+  const layer = $('chat-layer');
+  const b = document.createElement('div');
+  b.className = 'chat-bubble';
+  b.innerHTML = '<span class="who"></span><span class="txt"></span>';
+  b.querySelector('.who').textContent = `${c.avatar} ${c.name}`;
+  b.querySelector('.txt').textContent = c.text;
+  layer.appendChild(b);
+  while (layer.children.length > 4) layer.firstChild.remove();
+  setTimeout(() => { b.classList.add('fade'); setTimeout(() => b.remove(), 700); }, 4000);
+});
+
+/* ---------------- Compte à rebours ---------------- */
+socket.on('get_ready', g => {
+  $('feedback').classList.remove('show');
+  setVignette(false);
+  $('cd-count').textContent = `Question ${g.index + 1}/${g.total}`;
+  $('cd-final').style.display = g.isFinal ? '' : 'none';
+  show('countdown-screen');
+  let n = 3;
+  const num = $('cd-num');
+  const showN = () => {
+    num.textContent = n;
+    num.style.animation = 'none';
+    void num.offsetWidth;
+    num.style.animation = '';
+    Sound.count(n === 1);
+  };
+  showN();
+  const iv = setInterval(() => {
+    n--;
+    if (n <= 0) { clearInterval(iv); return; }
+    showN();
+  }, 1000);
+});
+
+/* ---------------- Question ---------------- */
 socket.on('question_start', q => {
   $('feedback').classList.remove('show');
   $('q-count').textContent = `${q.index + 1}/${q.total}`;
   $('q-text').textContent = q.text;
+  lastAnswers = q.answers;
 
   const grid = $('answers');
   grid.style.display = 'grid';
@@ -163,7 +315,7 @@ function startTimer(duration) {
   const bar = $('timer-bar');
   bar.classList.remove('running', 'urgent');
   $('timer-num').classList.remove('urgent');
-  void bar.offsetWidth; // reset animation
+  void bar.offsetWidth;
   bar.style.animationDuration = duration + 's';
   bar.classList.add('running');
 
@@ -181,6 +333,7 @@ function startTimer(duration) {
 function updateUrgency(left) {
   const urgent = left <= 3 && left > 0;
   setVignette(urgent);
+  if (urgent) Sound.tick();
   $('timer-num').classList.toggle('urgent', urgent);
   $('timer-bar').classList.toggle('urgent', urgent);
   if (left <= 0) setVignette(false);
@@ -192,10 +345,12 @@ function setVignette(on) {
 
 function answer(i) {
   socket.emit('player_answer', i);
+  Sound.pop();
   $('answers').style.display = 'none';
   $('answered-msg').style.display = 'flex';
 }
 
+/* ---------------- Feedback ---------------- */
 socket.on('player_feedback', fb => {
   clearInterval(timerInterval);
   setVignette(false);
@@ -205,18 +360,35 @@ socket.on('player_feedback', fb => {
   ov.classList.add('show', fb.correct ? 'good' : 'bad');
   $('fb-title').textContent = fb.correct ? 'Correct !' : 'Raté';
   $('fb-points').textContent = fb.correct ? `+${fb.points} pts` : '+0 pt';
+  $('fb-streak').textContent = (fb.correct && fb.streak >= 2) ? `🔥 ${fb.streak} d'affilée !` : '';
+  const d = fb.rankDelta;
+  $('fb-delta').textContent = d > 0 ? `▲ +${d} place${d > 1 ? 's' : ''}` : (d < 0 ? `▼ ${d} place${d < -1 ? 's' : ''}` : '');
+  $('fb-delta').className = 'fb-extra ' + (d > 0 ? 'rank-up' : d < 0 ? 'rank-down' : '');
+  $('fb-correct').textContent = fb.correct ? '' : `Bonne réponse : ${lastAnswers[fb.correctIndex] || ''}`;
   $('fb-rank').textContent = `Rang ${fb.rank}/${fb.totalPlayers} · ${fb.score} pts`;
+  fb.correct ? Sound.good() : Sound.bad();
 });
 
+/* ---------------- Fin ---------------- */
 socket.on('final_rank', fr => {
   $('feedback').classList.remove('show');
+  setVignette(false);
   $('final-rank').textContent = `#${fr.rank}`;
   $('final-score').textContent = `${myScore} pts · ${fr.totalPlayers} joueurs`;
   show('end');
+  if (fr.rank <= 3) {
+    Sound.good();
+    let burst = 0;
+    const iv = setInterval(() => {
+      for (let i = 0; i < 5; i++) spawnEmoji(['🎉', '✨', '🏆'][Math.floor(Math.random() * 3)]);
+      if (++burst >= 5) clearInterval(iv);
+    }, 400);
+  }
 });
 
 socket.on('game_closed', () => {
   $('feedback').classList.remove('show');
+  setVignette(false);
   $('join-err').textContent = 'La partie a été fermée par l\u2019hôte.';
   show('join');
 });
