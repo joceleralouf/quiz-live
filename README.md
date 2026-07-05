@@ -1,0 +1,49 @@
+# Quiz Live
+
+Quiz en temps réel type Kahoot, avec une différence clé : le téléphone du joueur affiche la question complète, les 4 réponses en texte (avec les formes/couleurs classiques), le timer et un feedback immédiat. Jouable en groupe avec écran hôte projeté, ou entièrement à distance chacun sur son téléphone.
+
+## Lancer en local (même wifi)
+
+```bash
+npm install
+npm start
+```
+
+- Hôte : `http://localhost:3000/host.html` — créer/éditer le quiz, lancer la partie
+- Joueurs : scanner le QR code affiché dans le lobby, ou taper l'IP locale affichée au démarrage du serveur (ex. `http://192.168.1.42:3000`) et entrer le PIN
+
+Le pare-feu de la machine hôte doit autoriser les connexions entrantes sur le port 3000.
+
+## Jouer à distance (sans écran partagé)
+
+GitHub Pages ne convient pas (site statique, pas de serveur websocket). Options gratuites :
+
+- **Render** (render.com) : nouveau Web Service depuis le repo GitHub, build `npm install`, start `npm start`. Le port est géré via `process.env.PORT` (déjà pris en charge).
+- **Railway** ou **Glitch** : même principe.
+
+Une fois déployé, le QR code et l'URL de join utilisent automatiquement le domaine public.
+
+## Architecture
+
+- `server.js` — Express + Socket.io, état de partie en mémoire, **une seule room à la fois** (une nouvelle partie ferme la précédente)
+- `public/host.html` — éditeur de quiz (brouillon en localStorage, import/export JSON), lobby avec PIN + QR, déroulé, classement intermédiaire, podium
+- `public/index.html` — interface joueur mobile, plein écran sans scroll
+- `public/style.css` — styles communs
+- `test-e2e.js` — test automatisé (1 hôte + 3 joueurs, partie complète) : `node server.js &` puis `node test-e2e.js`
+
+## Scoring
+
+Formule Kahoot : `points = round(1000 × (1 − (t / durée) / 2))` si la réponse est correcte, 0 sinon. Réponse instantanée ≈ 1000 pts, réponse à la dernière seconde ≈ 500 pts.
+
+## Règles de partie
+
+- La question se termine quand le timer expire **ou** quand tous les joueurs ont répondu
+- L'hôte peut passer une question en cours (bouton Passer)
+- Si l'hôte se déconnecte, la partie est fermée pour tout le monde
+- Les joueurs ne peuvent rejoindre que pendant le lobby (pas en cours de partie)
+
+## Évolutions prévues (hors MVP)
+
+- Multi-parties simultanées (remplacer le singleton `game` par une `Map<pin, game>`)
+- Reconnexion d'un joueur en cours de partie
+- Images dans les questions, mode duo/équipes

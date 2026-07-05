@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Quiz Live — Rejoindre</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<style>
+  body { overflow: hidden; }
+  .wrap { height: 100dvh; display: flex; flex-direction: column; padding: 16px; gap: 12px; }
+
+  /* Écran d'accueil */
+  #join { justify-content: center; align-items: center; gap: 18px; text-align: center; }
+  #join form { display: flex; flex-direction: column; gap: 12px; width: min(340px, 100%); }
+  #join input { text-align: center; font-size: 1.3rem; font-weight: 700; }
+  #pin-input { letter-spacing: .2em; }
+  .err { color: var(--red); font-weight: 600; min-height: 1.4em; }
+
+  /* Attente */
+  #wait { justify-content: center; align-items: center; gap: 14px; text-align: center; }
+  .pulse { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
+  @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+
+  /* Question */
+  #game { gap: 10px; }
+  .q-head { display: flex; align-items: center; gap: 12px; }
+  .q-head .timer-bar-wrap { flex: 1; }
+  #q-text {
+    font-size: clamp(1.15rem, 4.5vw, 1.7rem);
+    font-weight: 800;
+    line-height: 1.3;
+    max-height: 28dvh;
+    overflow-y: auto;
+  }
+  #answered-msg {
+    flex: 1; display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px; text-align: center;
+  }
+
+  /* Podium joueur */
+  #end { justify-content: center; align-items: center; gap: 14px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Rejoindre -->
+  <div id="join" class="screen active">
+    <div class="display" style="font-size:2rem">QUIZ LIVE</div>
+    <form id="join-form">
+      <input id="pin-input" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="PIN à 6 chiffres" required>
+      <input id="name-input" maxlength="20" placeholder="Ton pseudo" required>
+      <button class="btn-primary" type="submit">Rejoindre</button>
+      <div class="err" id="join-err"></div>
+    </form>
+    <a href="host.html" class="muted" style="font-size:.9rem">Créer une partie (hôte)</a>
+  </div>
+
+  <!-- Lobby / attente -->
+  <div id="wait" class="screen">
+    <div class="display" style="font-size:1.6rem" id="wait-title">Tu es dans la partie</div>
+    <div class="chip" id="wait-name"></div>
+    <div class="muted pulse">En attente du lancement…</div>
+  </div>
+
+  <!-- Question -->
+  <div id="game" class="screen">
+    <div class="q-head">
+      <span class="chip" id="q-count">1/10</span>
+      <div class="timer-bar-wrap"><div class="timer-bar" id="timer-bar"></div></div>
+      <span class="timer-num display" id="timer-num">20</span>
+    </div>
+    <div id="q-text"></div>
+    <div class="answers-grid" id="answers"></div>
+    <div id="answered-msg">
+      <div class="display" style="font-size:1.5rem">Réponse envoyée</div>
+      <div class="muted pulse">En attente des autres joueurs…</div>
+    </div>
+  </div>
+
+  <!-- Fin de partie -->
+  <div id="end" class="screen">
+    <div class="display" style="font-size:2rem">Partie terminée</div>
+    <div class="display" id="final-rank" style="font-size:3rem;color:var(--yellow)"></div>
+    <div class="chip" id="final-score"></div>
+  </div>
+</div>
+
+<!-- Feedback plein écran -->
+<div class="feedback-overlay" id="feedback">
+  <div class="big display" id="fb-title"></div>
+  <div class="points" id="fb-points"></div>
+  <div id="fb-rank" style="font-weight:600"></div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+const $ = id => document.getElementById(id);
+const SHAPES = [
+  '<svg class="shape" viewBox="0 0 30 30"><polygon points="15,3 28,27 2,27" fill="rgba(255,255,255,.9)"/></svg>',
+  '<svg class="shape" viewBox="0 0 30 30"><polygon points="15,2 28,15 15,28 2,15" fill="rgba(255,255,255,.9)"/></svg>',
+  '<svg class="shape" viewBox="0 0 30 30"><circle cx="15" cy="15" r="13" fill="rgba(26,22,8,.85)"/></svg>',
+  '<svg class="shape" viewBox="0 0 30 30"><rect x="3" y="3" width="24" height="24" fill="rgba(255,255,255,.9)"/></svg>'
+];
+
+let myScore = 0;
+let timerInterval = null;
+
+function show(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  $(id).classList.add('active');
+}
+
+// Pré-remplir le PIN depuis le QR code (?pin=XXXXXX)
+const urlPin = new URLSearchParams(location.search).get('pin');
+if (urlPin) $('pin-input').value = urlPin;
+
+$('join-form').addEventListener('submit', e => {
+  e.preventDefault();
+  socket.emit('player_join',
+    { pin: $('pin-input').value, name: $('name-input').value },
+    res => {
+      if (res.error) { $('join-err').textContent = res.error; return; }
+      $('wait-name').textContent = res.name;
+      $('wait-title').textContent = res.quizTitle;
+      show('wait');
+    });
+});
+
+socket.on('question_start', q => {
+  $('feedback').classList.remove('show');
+  $('q-count').textContent = `${q.index + 1}/${q.total}`;
+  $('q-text').textContent = q.text;
+
+  const grid = $('answers');
+  grid.style.display = 'grid';
+  $('answered-msg').style.display = 'none';
+  grid.innerHTML = '';
+  q.answers.forEach((a, i) => {
+    const b = document.createElement('button');
+    b.className = 'answer-btn';
+    b.dataset.i = i;
+    b.innerHTML = SHAPES[i] + '<span class="answer-text"></span>';
+    b.querySelector('.answer-text').textContent = a;
+    b.addEventListener('click', () => answer(i));
+    grid.appendChild(b);
+  });
+
+  startTimer(q.duration);
+  show('game');
+});
+
+function startTimer(duration) {
+  clearInterval(timerInterval);
+  const bar = $('timer-bar');
+  bar.classList.remove('running');
+  void bar.offsetWidth; // reset animation
+  bar.style.animationDuration = duration + 's';
+  bar.classList.add('running');
+
+  let left = duration;
+  $('timer-num').textContent = left;
+  timerInterval = setInterval(() => {
+    left--;
+    $('timer-num').textContent = Math.max(0, left);
+    if (left <= 0) clearInterval(timerInterval);
+  }, 1000);
+}
+
+function answer(i) {
+  socket.emit('player_answer', i);
+  $('answers').style.display = 'none';
+  $('answered-msg').style.display = 'flex';
+}
+
+socket.on('player_feedback', fb => {
+  clearInterval(timerInterval);
+  myScore = fb.score;
+  const ov = $('feedback');
+  ov.classList.remove('good', 'bad');
+  ov.classList.add('show', fb.correct ? 'good' : 'bad');
+  $('fb-title').textContent = fb.correct ? 'Correct !' : 'Raté';
+  $('fb-points').textContent = fb.correct ? `+${fb.points} pts` : '+0 pt';
+  $('fb-rank').textContent = `Rang ${fb.rank}/${fb.totalPlayers} · ${fb.score} pts`;
+});
+
+socket.on('final_rank', fr => {
+  $('feedback').classList.remove('show');
+  $('final-rank').textContent = `#${fr.rank}`;
+  $('final-score').textContent = `${myScore} pts · ${fr.totalPlayers} joueurs`;
+  show('end');
+});
+
+socket.on('game_closed', () => {
+  $('feedback').classList.remove('show');
+  $('join-err').textContent = 'La partie a été fermée par l\u2019hôte.';
+  show('join');
+});
+</script>
+</body>
+</html>
